@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environment
+.venv_gds/
+venv/
+env/
+
+# IDE / editor settings
+.vscode/
+.idea/
+
+# Test / cache files
+.pytest_cache/
+*.log
+
+# GDS / meta outputs
+*.gds
+*.json
+*.csv
