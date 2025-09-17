@@ -1,34 +1,39 @@
 # examples/build_serpentine.py
-from __future__ import annotations
 from piezo_pic.tech.layers import DEFAULT_LAYERS
-from piezo_pic.tech.params import (
-    DeviceDefaults, SerpentineParams, WaveguideWidths, PlateParams,
-    ASiParams, HoleParams, BuildParams
-)
+from piezo_pic.tech.params import DeviceDefaults
 from piezo_pic.cells.serpentine_multilayer import build_serpentine_multilayer_cell
 from piezo_pic.io.write import write_gds_with_meta
 
 
-def main():
-    defaults = DeviceDefaults()
+def main() -> None:
+    d = DeviceDefaults()  # all defaults in one place
 
-    # Optionally override a few knobs here:
-    serp = SerpentineParams(**defaults.serpentine.model_dump())
-    widths = WaveguideWidths(**defaults.widths.model_dump())
-    plate = PlateParams(**defaults.plate.model_dump())
-    asi   = ASiParams(**defaults.asi.model_dump())
-    holes = HoleParams(**defaults.holes.model_dump())
-    build = BuildParams(**defaults.build.model_dump())
+    # --- Override release-hole density in MAIN ---
+    d.holes.add_holes = True
 
-    # Example tweak:
-    # holes.hole_diam_um = 2.0
-    # build.gds_path = "serpentine12_multilayer_rectM_rot.gds"
+    # Choose ONE:
+    # A) Fixed count per column (simplest)
+    d.holes.holes_per_col = 6
+    d.holes.hole_pitch_y_um = None  # ensure pitch doesn't override
+
+    # B) Or, pitch-based spacing (comment A out and use this instead)
+    # d.holes.holes_per_col = None
+    # d.holes.hole_pitch_y_um = 25.0  # µm between holes vertically
+
+    # Optional: give the output a clearer name
+    d.build.gds_path = "serpentine_multilayer.gds"
 
     comp, meta = build_serpentine_multilayer_cell(
         layers=DEFAULT_LAYERS,
-        serp=serp, widths=widths, plate=plate, asi=asi, holes=holes, build=build
+        serp=d.serpentine,
+        widths=d.widths,
+        plate=d.plate,
+        asi=d.asi,
+        holes=d.holes,
+        build=d.build,
     )
-    out = write_gds_with_meta(comp, meta, build.gds_path)
+
+    out = write_gds_with_meta(comp, meta, d.build.gds_path)
     print(f"Wrote {out}")
 
 

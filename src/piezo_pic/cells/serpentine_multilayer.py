@@ -8,7 +8,7 @@ import numpy as np
 import gdsfactory as gf
 
 from ..geometry.serpentine import serpentine_path_um
-from ..utils.geometry import rotate_xy, bbox_xyxy
+from ..utils.geometry import bbox_xyxy, path_length_um, sample_points_um
 from ..tech.layers import LayerMap
 from ..tech.params import (
     SerpentineParams,
@@ -20,10 +20,8 @@ from ..tech.params import (
 )
 from ..features.release import add_release_rows_at_seams_final_frame
 from .stack import (
-    # Updated helper should place the plate on AL_BOTTOM/ALN/AL_TOP
-    # and return (r_plate_top, r_asi, r_plate_all)
     build_plate_and_asi_unrotated,
-    align_asi_to_plate_left_after_rotation,
+    align_asi_to_plate_left_after_rotation,  # name kept for compatibility
 )
 
 
@@ -84,52 +82,31 @@ def build_serpentine_multilayer_cell(
 
     # 4) Plate + a-Si (UNROTATED frame)
     pts = np.asarray(P.points)
-
-    # UPDATED: helper should build three coincident rectangles (AL_BOTTOM, ALN, AL_TOP)
-    # and return (r_plate_top, r_asi, r_plate_all) for later use.
     r_plate_top, r_asi, r_plate_all = build_plate_and_asi_unrotated(
         D=D, path_points_um=pts, plate=plate, asi=asi, layers=layers
     )
 
-    # Backward-compatibility: if older helper returned only one plate ref, normalize it.
+    # Backward-compatibility: normalize if helper returned a single ref
     if isinstance(r_plate_all, (type(None), gf.ComponentReference.__class__)) or not isinstance(r_plate_all, list):
-        # Fall back to using the representative ref in a list
         r_plate_all = [r_plate_top]
 
-    # 5) Rotate whole device to FINAL orientation
-    if build.rotate_deg:
-        D.rotate(build.rotate_deg, center=(0, 0))
-
-    # 6) Align a-Si to plate in FINAL frame
+    # 5) Align a-Si to plate (still valid in unrotated frame)
     align_asi_to_plate_left_after_rotation(r_plate_top, r_asi, asi)
 
-    # 7) Release holes (FINAL frame)
+    # 6) Release holes (UNROTATED final frame)
     if holes.add_holes:
-        # Plate bbox in FINAL frame: union of all three plate refs (or single ref if fallback)
+        # Plate bbox: union of all plate refs
         bxmin, bymin, bxmax, bymax = _union_bbox_of_refs(r_plate_all)
 
-        # Sample the centerline and rotate those samples to FINAL frame
-        try:
-            s_vals = np.linspace(0.0, float(P.length()), 4000)
-            pts_sample = P.sample(s_vals)
-        except Exception:
-            # Compatibility path for older path objects
-            pts0 = np.asarray(P.points)
-            seg = np.sqrt(np.sum(np.diff(pts0, axis=0) ** 2, axis=1))
-            s_cum = np.concatenate([[0.0], np.cumsum(seg)])
-            s_vals = np.linspace(0.0, s_cum[-1], 4000)
-            x = np.interp(s_vals, s_cum, pts0[:, 0])
-            y = np.interp(s_vals, s_cum, pts0[:, 1])
-            pts_sample = np.column_stack([x, y])
+        # Sample the centerline robustly (works across gf versions)
+        s_vals = np.linspace(0.0, path_length_um(P), 4000)
+        pts_final = sample_points_um(P, s_vals)  # final == unrotated
 
-        pts_final = rotate_xy(pts_sample, build.rotate_deg)
-
-        # Convenience wrapper version of the hole adder
         add_release_rows_at_seams_final_frame(
             comp=D,
             P=P,
             plate_bbox_xyxy=(bxmin, bymin, bxmax, bymax),
-            rotate_deg=build.rotate_deg,
+            rotate_deg=0.0,  # no global rotation
             layers=layers,
             holes=holes,
             widths=widths,
@@ -141,7 +118,7 @@ def build_serpentine_multilayer_cell(
             pts_final=pts_final,
         )
 
-    # 8) Metadata for sidecar JSON (dimensions are in FINAL frame)
+    # 7) Metadata for sidecar JSON (dimensions in current unrotated frame)
     px0, py0, px1, py1 = _union_bbox_of_refs(r_plate_all)
     rect_l = float(px1 - px0)
     rect_w = float(py1 - py0)
@@ -149,9 +126,8 @@ def build_serpentine_multilayer_cell(
     meta: Dict[str, Any] = {
         "description": (
             "Serpentine SiN with oxide overclad, Al/AlN/Al trilayer plate, "
-            "a-Si overhang, and release holes."
+            "a-Si overhang, and (optional) release holes."
         ),
-    # Removed MetalStack; list the three plate layers instead
         "layers": {
             "SiN": {
                 "gds_layer": layers.SIN[0],
@@ -200,7 +176,7 @@ def build_serpentine_multilayer_cell(
                 "enabled": holes.add_holes,
             },
         },
-        "build": {"rotate_deg": build.rotate_deg},
+        "build": {"rotate_deg": 0.0},
         "serpentine": serp.model_dump(),
     }
 

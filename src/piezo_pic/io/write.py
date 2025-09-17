@@ -12,24 +12,27 @@ def write_gds_with_meta(
     gds_path: Union[str, Path],
 ) -> Path:
     """
-    Write a component to GDS and a sidecar .meta.json file next to it.
+    Write a component to a GDS file and a sidecar JSON metadata file.
 
     Parameters
     ----------
     comp : gf.Component
         The component to write.
-    meta : Dict[str, Any]
-        Metadata dictionary to save alongside the GDS.
+    meta : dict
+        Metadata to save alongside the GDS.
     gds_path : str | Path
-        Path to the .gds file to write.
+        Destination path (will be forced to `.gds` extension).
 
     Returns
     -------
     Path
-        Path to the written .gds file.
+        Path to the written `.gds` file.
     """
     gds_path = Path(gds_path).with_suffix(".gds")
     comp.write_gds(str(gds_path))
+
     meta_path = gds_path.with_suffix(".meta.json")
-    meta_path.write_text(json.dumps(meta, indent=2))
+    with meta_path.open("w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+
     return gds_path

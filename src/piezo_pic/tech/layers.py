@@ -1,23 +1,28 @@
 # src/piezo_pic/tech/layers.py
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import TypeAlias
 
-# Tuple alias: (layer, datatype)
-GdsLayer = tuple[int, int]
+# GDSII layer/datatype pair
+GdsLayer: TypeAlias = tuple[int, int]
 
 # --- Default layer map (edit to match your PDK) ---
-L_SIN: GdsLayer      = (1, 0)    # SiN core (serpentine)
-L_AL_BOTTOM: GdsLayer = (2, 0)   # Bottom Aluminum
-L_ALN: GdsLayer       = (3, 0)   # Aluminum Nitride
-L_AL_TOP: GdsLayer    = (4, 0)   # Top Aluminum
-L_OXIDE: GdsLayer     = (5, 0)   # oxide cladding that follows the serpentine
-L_ASI: GdsLayer       = (6, 0)   # amorphous-Si cantilever overhang (rectangle)
-L_RELEASE: GdsLayer   = (10, 0)  # release holes
-L_M1: GdsLayer        = (20, 0)  # metal pad
+L_SIN: GdsLayer       = (1, 0)    # SiN core (serpentine)
+L_AL_BOTTOM: GdsLayer = (2, 0)    # Bottom Aluminum
+L_ALN: GdsLayer       = (3, 0)    # Aluminum Nitride
+L_AL_TOP: GdsLayer    = (4, 0)    # Top Aluminum
+L_OXIDE: GdsLayer     = (5, 0)    # Oxide cladding that follows the serpentine
+L_ASI: GdsLayer       = (6, 0)    # Amorphous-Si cantilever overhang (rectangle)
+L_RELEASE: GdsLayer   = (10, 0)   # Release holes
+L_M1: GdsLayer        = (20, 0)   # Metal pad
+
 
 @dataclass(frozen=True)
 class LayerMap:
-    """Container for all layers used in this PDK/tech file."""
+    """
+    Immutable container for all layers used in this PDK/tech file.
+    Each field is a (layer, datatype) pair for GDSII.
+    """
     SIN: GdsLayer = L_SIN
     AL_BOTTOM: GdsLayer = L_AL_BOTTOM
     ALN: GdsLayer = L_ALN
@@ -27,4 +32,6 @@ class LayerMap:
     RELEASE: GdsLayer = L_RELEASE
     M1: GdsLayer = L_M1
 
+
+# Default global instance
 DEFAULT_LAYERS = LayerMap()

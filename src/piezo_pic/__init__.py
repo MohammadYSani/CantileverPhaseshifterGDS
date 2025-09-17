@@ -1,4 +1,12 @@
 # src/piezo_pic/__init__.py
+"""
+piezo_pic: PDK and utilities for piezo-optomechanical cantilever waveguides.
+
+This package bundles:
+- Tech definitions (layers, parameter sets)
+- Geometry generators (serpentine path, cross-section utilities)
+- Helpers for GDS export and geometric calculations
+"""
 
 from .tech.layers import (
     DEFAULT_LAYERS,
@@ -25,7 +33,6 @@ from .geometry.serpentine import serpentine_path_um
 from .utils.geometry import (
     path_length_um,
     sample_points_um,
-    rotate_xy,
     bbox_xyxy,
     min_dist_point_polyline,
 )
@@ -55,7 +62,6 @@ __all__ = [
     # utils
     "path_length_um",
     "sample_points_um",
-    "rotate_xy",
     "bbox_xyxy",
     "min_dist_point_polyline",
 ]

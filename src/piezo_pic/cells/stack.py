@@ -11,21 +11,21 @@ from ..tech.params import PlateParams, ASiParams
 
 def build_plate_and_asi_unrotated(
     D: gf.Component,
-    path_points_um: np.ndarray,        # centerline points (UNROTATED)
+    path_points_um: np.ndarray,        # centerline points (unrotated)
     plate: PlateParams,
     asi: ASiParams,
     layers: LayerMap,
 ) -> Tuple[gf.ComponentReference, Optional[gf.ComponentReference], List[gf.ComponentReference]]:
     """
     Create the trilayer plate rectangles (Al bottom / AlN / Al top) and the
-    optional a-Si overhang in the *unrotated* frame.
+    optional a-Si overhang in the current (unrotated) frame.
 
     Returns
     -------
     r_plate_top : ComponentReference
-        Representative plate reference (top Al) in UNROTATED position.
+        Representative plate reference (top Al).
     r_asi : Optional[ComponentReference]
-        a-Si rectangle reference (UNROTATED rough position) or None.
+        a-Si rectangle reference (rough placement) or None.
     r_plate_all : list[ComponentReference]
         [r_al_bottom, r_aln, r_al_top] for union bbox / downstream ops.
     """
@@ -39,14 +39,16 @@ def build_plate_and_asi_unrotated(
     yspan = ymax - ymin
     ycenter = 0.5 * (ymin + ymax)
 
-    # Plate size & position (UNROTATED)
-    # Note: parameter names still use "mstack_*" for backward-compatibility.
+    # Plate size & position
+    # Note: parameter names keep "mstack_*" for backward-compatibility.
     if plate.mstack_rect_length_um is None:
         rect_l = xspan + 2 * plate.mx_margin
         rect_left_x = xmin - plate.mx_margin
     else:
         rect_l = plate.mstack_rect_length_um
         rect_left_x = xmin
+
+    # Ensure the plate at least covers the serpentine + margins in Y
     rect_w = max(plate.mstack_rect_width_um, yspan + 2 * plate.my_margin)
 
     # --- Build identical rectangles on AL_BOTTOM, ALN, AL_TOP ---
@@ -54,17 +56,21 @@ def build_plate_and_asi_unrotated(
     for L in (layers.AL_BOTTOM, layers.ALN, layers.AL_TOP):
         rect = gf.components.rectangle(size=(rect_l, rect_w), layer=L)
         r = D << rect
-        r.move((rect_left_x + plate.mstack_rect_dx_um,
-                (ycenter - rect_w / 2) + plate.mstack_rect_dy_um))
+        r.move((
+            rect_left_x + plate.mstack_rect_dx_um,
+            (ycenter - rect_w / 2) + plate.mstack_rect_dy_um,
+        ))
         r_plate_all.append(r)
 
     # Representative plate ref: use the top Al layer
     r_plate_top = r_plate_all[-1]  # AL_TOP
 
-    # --- a-Si overhang (UNROTATED, rough placement; final alignment after rotation) ---
+    # --- a-Si overhang (rough placement; exact snap done by align_asi_to_plate_left_after_rotation) ---
     r_asi = None
     if asi.add_asi:
-        asi_w = min(asi.asi_rect_width_um, rect_w)   # Y-size
+        # Y-size of a-Si is clamped to the plate height so it never sticks out
+        asi_w = min(asi.asi_rect_width_um, rect_w)
+        # X-length extends to the left by asi_overhang_left_um (>=0) when snapped
         asi_len = rect_l + max(0.0, asi.asi_overhang_left_um)
         aSi = gf.components.rectangle(size=(asi_len, asi_w), layer=layers.ASI)
         r_asi = D << aSi
@@ -89,5 +95,7 @@ def align_asi_to_plate_left_after_rotation(
     ax0, ay0, ax1, ay1 = bbox_xyxy(r_asi)
 
     dx = (px0 - ax0) - max(0.0, asi.asi_overhang_left_um) + asi.asi_rect_dx_um
-    dy = ((py0 + py1) / 2.0) - ((ay0 + ay1) / 2.0) + asi.asi_rect_dy_um
+    # align TOP edges instead of centers
+    dy = (py1 - ay1) + asi.asi_rect_dy_um
+
     r_asi.move((dx, dy))

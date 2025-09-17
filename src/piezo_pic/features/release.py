@@ -5,69 +5,69 @@ import numpy as np
 import gdsfactory as gf
 
 from ..utils.geometry import (
-    rotate_xy,
     min_dist_point_polyline,
+    path_length_um,
+    sample_points_um,
 )
 from ..tech.layers import LayerMap
 from ..tech.params import HoleParams, WaveguideWidths
 
 
+def _dedupe_sorted(vals: np.ndarray, tol: float = 1e-3) -> np.ndarray:
+    """Return sorted unique values with a tolerance (microns)."""
+    if vals.size == 0:
+        return vals
+    vals = np.sort(vals.astype(float))
+    keep = [vals[0]]
+    for v in vals[1:]:
+        if abs(v - keep[-1]) > tol:
+            keep.append(v)
+    return np.array(keep, dtype=float)
+
+
+# src/piezo_pic/features/release.py  (only the function below changes)
+
 def add_release_rows_at_seams_final_frame(
     comp: gf.Component,
     P,                                 # gf.Path (unrotated)
-    plate_bbox_xyxy: Tuple[float, float, float, float],  # FINAL frame bbox
-    rotate_deg: float,
+    plate_bbox_xyxy: Tuple[float, float, float, float],  # plate bbox in current frame
+    rotate_deg: float,                 # kept for API compatibility; ignored
     layers: LayerMap,
     holes: HoleParams,
     widths: WaveguideWidths,
     *,
     sample_N: int = 4000,
-    straight_tol: float = 0.06,
+    straight_tol: float = 0.06,        # now used as tolerance on |dx/dy| for VERTICAL straights
     bend_trim_um: float = 2.0,
     mx_margin: float = 2.0,
     my_margin: float = 2.0,
-    pts_final: Optional[np.ndarray] = None,  # pre-rotated sample passed in? (FINAL frame)
+    pts_final: Optional[np.ndarray] = None,  # optional pre-sampled centerline (current frame)
 ) -> None:
     """
-    Place *rows* of circular release holes centered between adjacent straight
-    segments of the serpentine *in the FINAL frame* (after rotation).
-    Keeps a radial clearance from the SiN core.
-
-    Notes
-    -----
-    - "straight" detection: slope < straight_tol and |dx|>0 on sampled points
-    - rows span the plate's inner margin box (edge margins mx/my)
-    - if `holes.holes_per_row` is an int > 0, place exactly that many per row;
-      otherwise use `holes.hole_pitch_um` as uniform step.
+    Place release holes as vertical columns:
+      • one at the left inner plate margin,
+      • one at the right inner plate margin,
+      • and one at the midpoint (in X) between every pair of adjacent **vertical** straights
+        of the serpentine (so columns sit BETWEEN the vertical waveguide legs, not on them).
+    Holes in each column are equispaced vertically.
     """
-    # --- Sample the centerline and rotate to FINAL frame ---
+    # --- Sample the centerline in the current frame ---
     if pts_final is None:
-        try:
-            s_vals = np.linspace(0.0, float(P.length()), sample_N)
-            pts = P.sample(s_vals)
-        except Exception:
-            pts0 = np.asarray(P.points)
-            if len(pts0) < 2:
-                return
-            seg = np.sqrt(np.sum(np.diff(pts0, axis=0) ** 2, axis=1))
-            s_cum = np.concatenate([[0.0], np.cumsum(seg)])
-            s_vals = np.linspace(0.0, s_cum[-1], sample_N)
-            x = np.interp(s_vals, s_cum, pts0[:, 0])
-            y = np.interp(s_vals, s_cum, pts0[:, 1])
-            pts = np.column_stack([x, y])
-        pts_f = rotate_xy(pts, rotate_deg)
+        s_vals = np.linspace(0.0, path_length_um(P), sample_N)
+        pts_f = sample_points_um(P, s_vals)
     else:
-        pts_f = np.asarray(pts_final)
-
+        pts_f = np.asarray(pts_final, dtype=float)
     if len(pts_f) < 2:
         return
 
-    # --- Detect "straight" runs (|dy/dx| small AND |dx|>0) ---
-    d = np.diff(pts_f, axis=0)
-    dx, dy = d[:, 0], d[:, 1]
-    slope = np.abs(dy / (np.abs(dx) + 1e-12))
-    mask = (slope < straight_tol) & (np.abs(dx) > 1e-9)
+    # --- Detect VERTICAL straights: |dx/dy| small AND |dy|>0 ---
+    d  = np.diff(pts_f, axis=0)
+    dx = d[:, 0]
+    dy = d[:, 1]
+    inv_slope = np.abs(dx / (np.abs(dy) + 1e-12))   # ~0 for vertical segments
+    mask = (inv_slope < straight_tol) & (np.abs(dy) > 1e-9)
 
+    # Group consecutive True's into runs
     runs, i, N = [], 0, mask.size
     while i < N:
         if mask[i]:
@@ -78,20 +78,24 @@ def add_release_rows_at_seams_final_frame(
             i = j
         else:
             i += 1
-    if len(runs) < 2:
+    if not runs:
         return
 
-    # --- Convert runs to usable straight spans with bend trimming ---
-    straights = []
+    # --- Convert runs to vertical straights (trim a bit near bends) ---
+    # For vertical straights, X should be ~constant; we take the center X.
+    x_centers = []
     for i0, i1 in runs:
-        seg_pts = pts_f[i0:i1 + 1]
-        x_min = float(seg_pts[:, 0].min()) + bend_trim_um
-        x_max = float(seg_pts[:, 0].max()) - bend_trim_um
-        y_mean = float(seg_pts[:, 1].mean())
-        if x_max > x_min:
-            straights.append((x_min, x_max, y_mean))
-    if len(straights) < 2:
+        seg = pts_f[i0:i1 + 1]
+        # Trim top/bottom ends a little along arclength by dropping a few points
+        if len(seg) > 2:
+            seg = seg[1:-1]
+        if len(seg) == 0:
+            continue
+        x_centers.append(float(seg[:, 0].mean()))
+    if len(x_centers) < 2:
+        # Not enough vertical legs to form seams
         return
+    x_centers = np.array(sorted(x_centers), dtype=float)
 
     # --- Inner "safe" rectangle inside plate margins ---
     xmin, ymin, xmax, ymax = plate_bbox_xyxy
@@ -102,32 +106,41 @@ def add_release_rows_at_seams_final_frame(
     if x1 <= x0 or y1 <= y0:
         return
 
-    # --- Waveguide keep-out radius ---
-    # Use holes.avoid_clearance_um if present; else default to 0.20 µm
+    # --- Build column X positions ---
+    # Columns at inner margins + midpoints BETWEEN adjacent vertical straights
+    mids = 0.5 * (x_centers[:-1] + x_centers[1:])
+    seam_xs = np.concatenate([[x0], mids, [x1]])
+    # Clip & dedupe for safety
+    seam_xs = seam_xs[(seam_xs >= x0) & (seam_xs <= x1)]
+    seam_xs = _dedupe_sorted(seam_xs, tol=1e-3)
+    if seam_xs.size == 0:
+        return
+
+    # --- Vertical Y positions: equispaced by count or pitch ---
+    if isinstance(getattr(holes, "holes_per_col", None), int) and holes.holes_per_col > 0:
+        ys = np.linspace(y0, y1, holes.holes_per_col)
+    else:
+        pitch_y = getattr(holes, "hole_pitch_y_um", None) or holes.hole_pitch_um
+        if pitch_y and pitch_y > 0:
+            ys = np.arange(y0, y1 + 1e-9, pitch_y)
+            if ys.size < 2:
+                ys = np.linspace(y0, y1, 2)
+        else:
+            ys = np.linspace(y0, y1, 2)
+
+    # --- Keep-out from SiN core ---
     avoid_clearance = getattr(holes, "avoid_clearance_um", 0.20)
     keepout_um = (widths.width_sin_um / 2.0) + (holes.hole_diam_um / 2.0) + avoid_clearance
 
-    # --- Hole primitive on release layer ---
+    # --- Hole primitive ---
     hole = gf.components.circle(radius=holes.hole_diam_um / 2.0, layer=layers.RELEASE)
 
-    # --- For each pair of adjacent straights, place a row halfway in Y ---
-    for k in range(len(straights) - 1):
-        _, _, y0s = straights[k]
-        _, _, y1s = straights[k + 1]
-        y_mid = 0.5 * (y0s + y1s)
-        if not (y0 <= y_mid <= y1):
-            continue
-
-        if isinstance(holes.holes_per_row, int) and holes.holes_per_row > 0:
-            xs = np.linspace(x0, x1, holes.holes_per_row)
-        else:
-            xs = np.arange(x0, x1 + 1e-9, holes.hole_pitch_um)
-
-        for x in xs:
-            # Honor keep-out from the SiN centerline
+    # --- Place holes ---
+    for x in seam_xs:
+        for y in ys:
             if keepout_um > 0:
-                dmin = min_dist_point_polyline(float(x), float(y_mid), pts_f)
+                dmin = min_dist_point_polyline(float(x), float(y), pts_f)
                 if dmin < keepout_um:
                     continue
             ref = comp << hole
-            ref.move((float(x), float(y_mid)))
+            ref.move((float(x), float(y)))
