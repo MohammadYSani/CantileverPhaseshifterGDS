@@ -12,7 +12,7 @@ def main() -> None:
     # --- Serpentine (Design 1) ---
     d.serpentine.iterations = 12       # ~6 S-motifs
     d.serpentine.radius_um  = 9.5    # Euler bend radius
-    d.serpentine.length_um  = 316.0    # straight section length
+    d.serpentine.length_um  = 295.2    # straight section length
 
     # --- Plate (Al/AlN/Al) ---
     d.plate.mstack_rect_length_um = 325.0   # auto in X to cover the serpentine
