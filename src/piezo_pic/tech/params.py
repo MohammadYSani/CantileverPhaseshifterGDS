@@ -24,30 +24,33 @@ class PlateParams(BaseModel):
     mstack_rect_length_um: Optional[float] = None  # None -> auto span
     mstack_rect_width_um: float = 6.0
     mstack_rect_dx_um: float = 0.0
-    mstack_rect_dy_um: float = 0.0
+    mstack_rect_dy_um: float = -25.0
     mx_margin: float = 2.0
     my_margin: float = 2.0
 
 
 class ASiParams(BaseModel):
-    """Parameters for the amorphous-Si overhang region."""
     add_asi: bool = True
     asi_rect_width_um: float = 30.0
     asi_overhang_left_um: float = 0.0
     asi_rect_dx_um: float = 0.0
     asi_rect_dy_um: float = 0.0
+    overhang_x_um: Optional[float] = None   # NEW: cantilever length along X
 
 
 class HoleParams(BaseModel):
     add_holes: bool = True
     hole_diam_um: float = 3.0
-    hole_pitch_um: float = 3.0         # (kept for X pitch fallback)
-    holes_per_row: int = 6            # (unused for seams; still kept for compat)
+    hole_pitch_um: float = 3.0
+    holes_per_row: int = 6
     avoid_clearance_um: float = 0.20
 
-    # NEW (vertical control)
+    # vertical control
     hole_pitch_y_um: Optional[float] = None
     holes_per_col: Optional[int] = None
+
+    # NEW: trim hole rows away from the overhang/clamp boundary
+    edge_clearance_y_um: float = 0.0   # e.g. 5.0 removes the first/last row near the Y edges
 
 
 class BuildParams(BaseModel):

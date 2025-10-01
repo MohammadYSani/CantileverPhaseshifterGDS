@@ -1,4 +1,3 @@
-# src/piezo_pic/features/release.py
 from __future__ import annotations
 from typing import Optional, Tuple
 import numpy as np
@@ -25,8 +24,6 @@ def _dedupe_sorted(vals: np.ndarray, tol: float = 1e-3) -> np.ndarray:
     return np.array(keep, dtype=float)
 
 
-# src/piezo_pic/features/release.py  (only the function below changes)
-
 def add_release_rows_at_seams_final_frame(
     comp: gf.Component,
     P,                                 # gf.Path (unrotated)
@@ -37,19 +34,21 @@ def add_release_rows_at_seams_final_frame(
     widths: WaveguideWidths,
     *,
     sample_N: int = 4000,
-    straight_tol: float = 0.06,        # now used as tolerance on |dx/dy| for VERTICAL straights
+    straight_tol: float = 0.06,        # tolerance on |dx/dy| for VERTICAL straights
     bend_trim_um: float = 2.0,
     mx_margin: float = 2.0,
     my_margin: float = 2.0,
     pts_final: Optional[np.ndarray] = None,  # optional pre-sampled centerline (current frame)
+    x_range: Optional[Tuple[float, float]] = None,       # allowed X window for holes
+    y_range: Optional[Tuple[float, float]] = None,       # allowed Y window for holes
 ) -> None:
     """
     Place release holes as vertical columns:
       • one at the left inner plate margin,
       • one at the right inner plate margin,
       • and one at the midpoint (in X) between every pair of adjacent **vertical** straights
-        of the serpentine (so columns sit BETWEEN the vertical waveguide legs, not on them).
-    Holes in each column are equispaced vertically.
+        of the serpentine (so columns sit BETWEEN the vertical waveguide legs).
+    Holes are equispaced vertically. Optional x_range/y_range clip the placement window.
     """
     # --- Sample the centerline in the current frame ---
     if pts_final is None:
@@ -81,55 +80,79 @@ def add_release_rows_at_seams_final_frame(
     if not runs:
         return
 
-    # --- Convert runs to vertical straights (trim a bit near bends) ---
-    # For vertical straights, X should be ~constant; we take the center X.
+    # --- Convert runs to vertical straights (trim ends a little) ---
     x_centers = []
     for i0, i1 in runs:
         seg = pts_f[i0:i1 + 1]
-        # Trim top/bottom ends a little along arclength by dropping a few points
         if len(seg) > 2:
             seg = seg[1:-1]
         if len(seg) == 0:
             continue
         x_centers.append(float(seg[:, 0].mean()))
     if len(x_centers) < 2:
-        # Not enough vertical legs to form seams
         return
     x_centers = np.array(sorted(x_centers), dtype=float)
 
     # --- Inner "safe" rectangle inside plate margins ---
     xmin, ymin, xmax, ymax = plate_bbox_xyxy
-    x0 = xmin + mx_margin
-    x1 = xmax - mx_margin
-    y0 = ymin + my_margin
-    y1 = ymax - my_margin
-    if x1 <= x0 or y1 <= y0:
+    x0_inner = xmin + mx_margin
+    x1_inner = xmax - mx_margin
+    y0_inner = ymin + my_margin
+    y1_inner = ymax - my_margin
+    if x1_inner <= x0_inner or y1_inner <= y0_inner:
         return
 
-    # --- Build column X positions ---
-    # Columns at inner margins + midpoints BETWEEN adjacent vertical straights
+    # Apply external clipping windows if provided
+    if x_range is not None:
+        xr0, xr1 = x_range
+        x0_inner = max(x0_inner, xr0)
+        x1_inner = min(x1_inner, xr1)
+    if y_range is not None:
+        yr0, yr1 = y_range
+        y0_inner = max(y0_inner, yr0)
+        y1_inner = min(y1_inner, yr1)
+    if x1_inner <= x0_inner or y1_inner <= y0_inner:
+        return
+
+    # --- Build column X positions (margins + midpoints BETWEEN vertical legs) ---
     mids = 0.5 * (x_centers[:-1] + x_centers[1:])
-    seam_xs = np.concatenate([[x0], mids, [x1]])
-    # Clip & dedupe for safety
-    seam_xs = seam_xs[(seam_xs >= x0) & (seam_xs <= x1)]
+    seam_xs = np.concatenate([[x0_inner], mids, [x1_inner]])
+    seam_xs = seam_xs[(seam_xs >= x0_inner) & (seam_xs <= x1_inner)]
     seam_xs = _dedupe_sorted(seam_xs, tol=1e-3)
     if seam_xs.size == 0:
         return
 
-    # --- Vertical Y positions: equispaced by count or pitch ---
-    if isinstance(getattr(holes, "holes_per_col", None), int) and holes.holes_per_col > 0:
-        ys = np.linspace(y0, y1, holes.holes_per_col)
-    else:
-        pitch_y = getattr(holes, "hole_pitch_y_um", None) or holes.hole_pitch_um
-        if pitch_y and pitch_y > 0:
-            ys = np.arange(y0, y1 + 1e-9, pitch_y)
-            if ys.size < 2:
-                ys = np.linspace(y0, y1, 2)
+    # --- Vertical Y positions: EXCLUDE edge rows ---
+    if isinstance(getattr(holes, "holes_per_col", None), int) and holes.holes_per_col is not None:
+        Nrows = max(0, int(holes.holes_per_col))
+        if Nrows == 0:
+            ys = np.array([], dtype=float)
+        elif Nrows == 1:
+            ys = np.array([(y0_inner + y1_inner) * 0.5], dtype=float)
         else:
-            ys = np.linspace(y0, y1, 2)
+            # exclude edges by padding by one and slicing out first/last
+            ys = np.linspace(y0_inner, y1_inner, Nrows + 2, dtype=float)[1:-1]
+    else:
+        pitch_y = float((getattr(holes, "hole_pitch_y_um", None) or holes.hole_pitch_um) or 0.0)
+        if pitch_y > 0.0:
+            # center the grid between the edges so no row is on the boundary
+            y_start = y0_inner + 0.5 * pitch_y
+            y_stop  = y1_inner - 0.5 * pitch_y
+            if y_stop < y_start:
+                # not enough room for one full pitch: place one row in the middle
+                ys = np.array([(y0_inner + y1_inner) * 0.5], dtype=float)
+            else:
+                # include end if within a tiny tolerance
+                ys = np.arange(y_start, y_stop + 1e-9, pitch_y, dtype=float)
+        else:
+            # fallback: one row in the middle (still avoids edges)
+            ys = np.array([(y0_inner + y1_inner) * 0.5], dtype=float)
+
+    if ys.size == 0:
+        return
 
     # --- Keep-out from SiN core ---
-    avoid_clearance = getattr(holes, "avoid_clearance_um", 0.20)
+    avoid_clearance = float(getattr(holes, "avoid_clearance_um", 0.20) or 0.0)
     keepout_um = (widths.width_sin_um / 2.0) + (holes.hole_diam_um / 2.0) + avoid_clearance
 
     # --- Hole primitive ---

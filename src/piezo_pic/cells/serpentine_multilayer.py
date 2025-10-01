@@ -1,4 +1,3 @@
-# src/piezo_pic/cells/serpentine_multilayer.py
 from __future__ import annotations
 
 from typing import Dict, Any, Tuple, List, Optional
@@ -21,7 +20,7 @@ from ..tech.params import (
 from ..features.release import add_release_rows_at_seams_final_frame
 from .stack import (
     build_plate_and_asi_unrotated,
-    align_asi_to_plate_left_after_rotation,  # name kept for compatibility
+    align_asi_to_plate_left_after_rotation,
 )
 
 
@@ -55,14 +54,6 @@ def build_serpentine_multilayer_cell(
 ) -> Tuple[gf.Component, Dict[str, Any]]:
     """
     Compose the full multilayer device as a gdsfactory.Component (no file I/O).
-
-    Returns
-    -------
-    (component, meta)
-      component : gf.Component
-          The assembled layout.
-      meta : Dict[str, Any]
-          Metadata suitable for a sidecar JSON.
     """
     # 1) Serpentine centerline (µm)
     P = serpentine_path_um(
@@ -72,7 +63,7 @@ def build_serpentine_multilayer_cell(
         npts_per_bend=serp.npts_per_bend,
     )
 
-    # 2) Top-level component; unique-ish name to avoid KLayout name clashes
+    # 2) Top-level component
     D = gf.Component(f"serpentine_multilayer_{uuid4().hex[:8]}")
 
     # 3) Oxide + SiN (UNROTATED frame)
@@ -86,27 +77,43 @@ def build_serpentine_multilayer_cell(
         D=D, path_points_um=pts, plate=plate, asi=asi, layers=layers
     )
 
-    # Backward-compatibility: normalize if helper returned a single ref
-    if isinstance(r_plate_all, (type(None), gf.ComponentReference.__class__)) or not isinstance(r_plate_all, list):
+    # Normalize list of plate refs
+    if not isinstance(r_plate_all, list) or len(r_plate_all) == 0:
         r_plate_all = [r_plate_top]
 
-    # 5) Align a-Si to plate (still valid in unrotated frame)
+    # 5) Align a-Si to plate (still unrotated)
     align_asi_to_plate_left_after_rotation(r_plate_top, r_asi, asi)
+
+    # --- Compute bboxes now (used both for holes and meta) ---
+    bxmin, bymin, bxmax, bymax = _union_bbox_of_refs(r_plate_all)
+    px0, py0, px1, py1 = bxmin, bymin, bxmax, bymax
+    rect_l = float(px1 - px0)
+    rect_w = float(py1 - py0)
+
+    # Optional a-Si bbox (to restrict holes to overhang region in Y and/or X)
+    asi_y_range: Optional[Tuple[float, float]] = None
+    asi_x_range: Optional[Tuple[float, float]] = None
+    if r_asi is not None:
+        ax0, ay0, ax1, ay1 = bbox_xyxy(r_asi)
+        # Intersect with plate inner margins when placing holes
+        asi_y_range = (ay0, ay1)
+        asi_x_range = (ax0, ax1)
 
     # 6) Release holes (UNROTATED final frame)
     if holes.add_holes:
-        # Plate bbox: union of all plate refs
-        bxmin, bymin, bxmax, bymax = _union_bbox_of_refs(r_plate_all)
-
-        # Sample the centerline robustly (works across gf versions)
+        # Sample the centerline robustly
         s_vals = np.linspace(0.0, path_length_um(P), 4000)
         pts_final = sample_points_um(P, s_vals)  # final == unrotated
+
+        # Build clipping windows:
+        x_range = asi_x_range  # if a-Si shorter in X, this limits holes in clamp region
+        y_range = asi_y_range  # limits holes to the a-Si overhang span in Y
 
         add_release_rows_at_seams_final_frame(
             comp=D,
             P=P,
             plate_bbox_xyxy=(bxmin, bymin, bxmax, bymax),
-            rotate_deg=0.0,  # no global rotation
+            rotate_deg=0.0,
             layers=layers,
             holes=holes,
             widths=widths,
@@ -116,13 +123,11 @@ def build_serpentine_multilayer_cell(
             mx_margin=plate.mx_margin,
             my_margin=plate.my_margin,
             pts_final=pts_final,
+            x_range=x_range,     # NEW
+            y_range=y_range,     # NEW
         )
 
-    # 7) Metadata for sidecar JSON (dimensions in current unrotated frame)
-    px0, py0, px1, py1 = _union_bbox_of_refs(r_plate_all)
-    rect_l = float(px1 - px0)
-    rect_w = float(py1 - py0)
-
+    # 7) Metadata for sidecar JSON
     meta: Dict[str, Any] = {
         "description": (
             "Serpentine SiN with oxide overclad, Al/AlN/Al trilayer plate, "
@@ -143,7 +148,6 @@ def build_serpentine_multilayer_cell(
             "aSi_overhang": {
                 "gds_layer": layers.ASI[0],
                 "datatype": layers.ASI[1],
-                "overhang_left_um": asi.asi_overhang_left_um,
                 "enabled": asi.add_asi,
             },
             "Al_bottom_plate": {
