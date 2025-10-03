@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import numpy as np
 import gdsfactory as gf
+from typing import Tuple, Optional
 
 from ..geometry.serpentine import serpentine_path_um
 from ..utils.geometry import bbox_xyxy, path_length_um, sample_points_um
@@ -127,6 +128,63 @@ def build_serpentine_multilayer_cell(
             y_range=y_range,     # NEW
         )
 
+    # 6.5) M1: inside the bottom strip of the metal stack, not overlapping a-Si
+    def _add_m1_bottom_strip(
+        comp: gf.Component,
+        *,
+        side_margin_um: float = 12.0,   # X clearance from plate edges
+        bottom_margin_um: float = 4.0,  # Y clearance from plate bottom
+        top_clear_um: float = 4.0,      # Y clearance below a-Si bottom
+        fixed_height_um: Optional[float] = 35.0,  # target strip height (None = use max)
+        fill_full_width: bool = True,   # fill width between side margins
+        place_right_aligned: bool = False,  # if not full width, right-align the pad
+        min_width_um: float = 80.0,     # if not full width
+        layer_m1 = layers.M1,
+    ) -> None:
+        # Plate bbox
+        # px0, py0, px1, py1 are already defined above
+        xL = px0 + side_margin_um
+        xR = px1 - side_margin_um
+
+        # Vertical window for the strip = from plate bottom up to (just below) a-Si bottom
+        if r_asi is not None:
+            ax0, ay0, ax1, ay1 = bbox_xyxy(r_asi)
+            y_top_limit = min(py1, ay0 - top_clear_um)   # don't overlap a-Si
+        else:
+            y_top_limit = py0 + (fixed_height_um or 40.0)
+
+        y0 = py0 + bottom_margin_um
+        y1 = max(y0, y_top_limit)
+
+        # If a fixed height is requested, clamp to it
+        if fixed_height_um is not None:
+            y1 = min(y0 + fixed_height_um, y1)
+
+        strip_h = y1 - y0
+        if strip_h <= 0.0 or xR <= xL:
+            return  # nothing to place
+
+        if fill_full_width:
+            w = xR - xL
+            rect = gf.components.rectangle(size=(w, strip_h), layer=layer_m1)
+            comp.add_ref(rect).move((xL, y0))
+        else:
+            w = max(min_width_um, (xR - xL) * 0.35)  # example width if not full
+            x = (xR - w) if place_right_aligned else xL
+            rect = gf.components.rectangle(size=(w, strip_h), layer=layer_m1)
+            comp.add_ref(rect).move((x, y0))
+
+    # Place the M1 strip: full width, ~35 µm tall, tucked between plate bottom and a-Si
+    _add_m1_bottom_strip(
+        comp=D,
+        side_margin_um=0.0,
+        bottom_margin_um=20.0,
+        top_clear_um=20.0,
+        fixed_height_um=None,     # tweak to match your screenshot
+        fill_full_width=True,     # full-width band like your black rectangle
+        layer_m1=layers.M1,
+    )
+
     # 7) Metadata for sidecar JSON
     meta: Dict[str, Any] = {
         "description": (
@@ -182,6 +240,17 @@ def build_serpentine_multilayer_cell(
         },
         "build": {"rotate_deg": 0.0},
         "serpentine": serp.model_dump(),
+    }
+
+    meta["layers"]["M1"] = {
+        "gds_layer": layers.M1[0],
+        "datatype": layers.M1[1],
+        "placement": "bottom_strip_inside_plate",
+        "side_margin_um": 12.0,
+        "bottom_margin_um": 4.0,
+        "top_clear_um": 4.0,
+        "height_um": 35.0,
+        "full_width": True,
     }
 
     return D, meta
