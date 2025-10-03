@@ -11,9 +11,16 @@ def main() -> None:
 
     # --- Serpentine (Design 2) ---
     # Paper: NL = 19 loops  -> iterations ~ 2*NL = 38 (same convention as Design 1: 12 -> ~6 loops)
-    d.serpentine.iterations = 38           # ~19 S/U-motif loops total
-    d.serpentine.radius_um  = 6.05         # Euler bend radius (R)
-    d.serpentine.length_um  = 75.0         # straight segment length (Ls)
+    d.serpentine.iterations   = 38      # ~19 S/U-motif loops total
+    d.serpentine.radius_um    = 6.05    # Euler bend radius (R)
+    d.serpentine.length_um    = 60.0    # straight segment length (Ls)
+
+    # Constrain vertical footprint to the a-Si window from the paper
+    d.serpentine.band_height_um = 80.0  # released band height (µm)
+    d.serpentine.y_margin_um    = 0.0   # equal clearance top/bottom inside that band
+
+    d.serpentine.y_offset_um = -14.0   # example: move WG+oxide down by 10 µm
+
 
     # --- Plate (Al/AlN/Al) ---
     # Paper footprint: ~100 x 650 µm (X x Y)
@@ -23,9 +30,9 @@ def main() -> None:
     d.plate.my_margin             = 2.0
 
     # --- a-Si overhang (released region) ---
-    # Overhang h = 80 µm
+    # Overhang h = 80 µm (matches band_height_um above)
     d.asi.add_asi              = True
-    d.asi.asi_rect_width_um    = 80.0      # vertical room available to pack straights+semicircles
+    d.asi.asi_rect_width_um    = 80.0
     d.asi.asi_overhang_left_um = 0.0
     d.asi.asi_rect_dx_um       = 0.0
     d.asi.asi_rect_dy_um       = 0.0
@@ -33,14 +40,12 @@ def main() -> None:
     # --- Release holes ---
     d.holes.add_holes          = True
     d.holes.hole_diam_um       = 3.0
-    d.holes.hole_pitch_um      = 10.0      # fallback; seam-based placement handled by the cell
+    d.holes.hole_pitch_um      = 10.0
     d.holes.avoid_clearance_um = 0.50
+    d.holes.holes_per_col      = 8
+    d.holes.hole_pitch_y_um    = None
 
-    # Since the plate Y-span is longer (650 µm), use more holes per column than Design 1
-    d.holes.holes_per_col = 8
-    d.holes.hole_pitch_y_um = None         # or set an explicit pitch and clear holes_per_col
-
-    # Output file
+    # --- Output file ---
     d.build.gds_path = "design2_serpentine_multilayer.gds"
 
     comp, meta = build_serpentine_multilayer_cell(

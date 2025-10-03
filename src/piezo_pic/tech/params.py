@@ -10,6 +10,18 @@ class SerpentineParams(BaseModel):
     radius_um: float = 15.0
     length_um: float = 60.0
     npts_per_bend: int = Field(300, ge=8, description="Sampling points per Euler bend")
+    y_offset_um: float = 0.0  # vertical shift applied to SiN + oxide after extrusion
+
+    # --- NEW optional fields (default off) ---
+    band_height_um: float | None = Field(
+        None,
+        description="If set, force the serpentine to fit inside this vertical window (µm).",
+    )
+    y_margin_um: float = Field(
+        0.0,
+        ge=0.0,
+        description="Equal clearance from top and bottom edges of the band_height window.",
+    )
 
 
 class WaveguideWidths(BaseModel):

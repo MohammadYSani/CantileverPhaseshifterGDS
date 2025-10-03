@@ -1,3 +1,4 @@
+# src/piezo_pic/cells/serpentine_multilayer.py
 from __future__ import annotations
 
 from typing import Dict, Any, Tuple, List, Optional
@@ -5,7 +6,6 @@ from uuid import uuid4
 
 import numpy as np
 import gdsfactory as gf
-from typing import Tuple, Optional
 
 from ..geometry.serpentine import serpentine_path_um
 from ..utils.geometry import bbox_xyxy, path_length_um, sample_points_um
@@ -62,15 +62,25 @@ def build_serpentine_multilayer_cell(
         radius_um=serp.radius_um,
         length_um=serp.length_um,
         npts_per_bend=serp.npts_per_bend,
+        band_height_um=getattr(serp, "band_height_um", None),
+        y_margin_um=getattr(serp, "y_margin_um", 0.0),
     )
 
     # 2) Top-level component
     D = gf.Component(f"serpentine_multilayer_{uuid4().hex[:8]}")
 
     # 3) Oxide + SiN (UNROTATED frame)
+    r_oxide = None
     if widths.add_oxide:
-        D << _extrude_layer(P, width_um=widths.width_oxide_um, layer=layers.OXIDE)
-    D << _extrude_layer(P, width_um=widths.width_sin_um, layer=layers.SIN)
+        r_oxide = D << _extrude_layer(P, width_um=widths.width_oxide_um, layer=layers.OXIDE)
+    r_sin = D << _extrude_layer(P, width_um=widths.width_sin_um, layer=layers.SIN)
+
+    # NEW: shift core + cladding as a block by serp.y_offset_um
+    if getattr(serp, "y_offset_um", 0.0) != 0.0:
+        dy = float(serp.y_offset_um)
+        if r_oxide is not None:
+            r_oxide.movey(dy)
+        r_sin.movey(dy)
 
     # 4) Plate + a-Si (UNROTATED frame)
     pts = np.asarray(P.points)
@@ -106,6 +116,11 @@ def build_serpentine_multilayer_cell(
         s_vals = np.linspace(0.0, path_length_um(P), 4000)
         pts_final = sample_points_um(P, s_vals)  # final == unrotated
 
+        # NEW: shift hole-avoidance path to match the moved SiN+oxide
+        dy = float(getattr(serp, "y_offset_um", 0.0) or 0.0)
+        if dy != 0.0:
+            pts_final[:, 1] += dy
+
         # Build clipping windows:
         x_range = asi_x_range  # if a-Si shorter in X, this limits holes in clamp region
         y_range = asi_y_range  # limits holes to the a-Si overhang span in Y
@@ -124,67 +139,11 @@ def build_serpentine_multilayer_cell(
             mx_margin=plate.mx_margin,
             my_margin=plate.my_margin,
             pts_final=pts_final,
-            x_range=x_range,     # NEW
-            y_range=y_range,     # NEW
+            x_range=x_range,
+            y_range=y_range,
         )
 
-    # 6.5) M1: inside the bottom strip of the metal stack, not overlapping a-Si
-    def _add_m1_bottom_strip(
-        comp: gf.Component,
-        *,
-        side_margin_um: float = 12.0,   # X clearance from plate edges
-        bottom_margin_um: float = 4.0,  # Y clearance from plate bottom
-        top_clear_um: float = 4.0,      # Y clearance below a-Si bottom
-        fixed_height_um: Optional[float] = 35.0,  # target strip height (None = use max)
-        fill_full_width: bool = True,   # fill width between side margins
-        place_right_aligned: bool = False,  # if not full width, right-align the pad
-        min_width_um: float = 80.0,     # if not full width
-        layer_m1 = layers.M1,
-    ) -> None:
-        # Plate bbox
-        # px0, py0, px1, py1 are already defined above
-        xL = px0 + side_margin_um
-        xR = px1 - side_margin_um
-
-        # Vertical window for the strip = from plate bottom up to (just below) a-Si bottom
-        if r_asi is not None:
-            ax0, ay0, ax1, ay1 = bbox_xyxy(r_asi)
-            y_top_limit = min(py1, ay0 - top_clear_um)   # don't overlap a-Si
-        else:
-            y_top_limit = py0 + (fixed_height_um or 40.0)
-
-        y0 = py0 + bottom_margin_um
-        y1 = max(y0, y_top_limit)
-
-        # If a fixed height is requested, clamp to it
-        if fixed_height_um is not None:
-            y1 = min(y0 + fixed_height_um, y1)
-
-        strip_h = y1 - y0
-        if strip_h <= 0.0 or xR <= xL:
-            return  # nothing to place
-
-        if fill_full_width:
-            w = xR - xL
-            rect = gf.components.rectangle(size=(w, strip_h), layer=layer_m1)
-            comp.add_ref(rect).move((xL, y0))
-        else:
-            w = max(min_width_um, (xR - xL) * 0.35)  # example width if not full
-            x = (xR - w) if place_right_aligned else xL
-            rect = gf.components.rectangle(size=(w, strip_h), layer=layer_m1)
-            comp.add_ref(rect).move((x, y0))
-
-    # Place the M1 strip: full width, ~35 µm tall, tucked between plate bottom and a-Si
-    _add_m1_bottom_strip(
-        comp=D,
-        side_margin_um=0.0,
-        bottom_margin_um=20.0,
-        top_clear_um=20.0,
-        fixed_height_um=None,     # tweak to match your screenshot
-        fill_full_width=True,     # full-width band like your black rectangle
-        layer_m1=layers.M1,
-    )
-
+    # Helper: bottom-strip window (between plate bottom and a-Si bottom)
     def _bottom_strip_window(
         *,
         side_margin_um: float = 0.0,
@@ -194,7 +153,6 @@ def build_serpentine_multilayer_cell(
         # plate bbox available in scope: px0, py0, px1, py1
         xL = px0 + side_margin_um
         xR = px1 - side_margin_um
-
         if xR <= xL:
             return None
 
@@ -204,9 +162,9 @@ def build_serpentine_multilayer_cell(
             y0 = py0 + symmetric_margin_um
             y1 = ay0 - symmetric_margin_um
             if fixed_height_um is not None:
-                mid = 0.5*(y0 + y1)
-                y0 = mid - 0.5*fixed_height_um
-                y1 = mid + 0.5*fixed_height_um
+                mid = 0.5 * (y0 + y1)
+                y0 = mid - 0.5 * fixed_height_um
+                y1 = mid + 0.5 * fixed_height_um
         else:
             # no a-Si: just use fixed height above plate bottom
             y0 = py0 + symmetric_margin_um
@@ -219,21 +177,27 @@ def build_serpentine_multilayer_cell(
 
     # 6.6) Two oxide rectangles covering the bottom strip region
     ws = _bottom_strip_window(
-        side_margin_um=0.0,          # you said: no side margin
-        symmetric_margin_um=0.0,    # example equal top/bottom margin; adjust as you like
-        fixed_height_um=None,        # None => fill the full gap between plate bottom and a-Si bottom
+        side_margin_um=0.0,          # no side margin
+        symmetric_margin_um=0.0,     # equal margin to plate bottom and a-Si bottom
+        fixed_height_um=None,        # None => full gap between plate bottom and a-Si bottom
     )
     if ws is not None:
         xL, y0, w, h = ws
-
         # lower oxide (between M1 and stack)
         ox_lower = gf.components.rectangle(size=(w, h), layer=layers.OX_LOWER_STRIP)
         D.add_ref(ox_lower).move((xL, y0))
-
-        # upper oxide (cap over stack; limited to the same strip window)
+        # upper oxide (cap over stack; same strip window)
         ox_upper = gf.components.rectangle(size=(w, h), layer=layers.OX_UPPER_STRIP)
         D.add_ref(ox_upper).move((xL, y0))
 
+        # --- M1 centered with symmetric inner margins inside this same window ---
+        OUTER_MARGIN = 0.0   # already applied via symmetric_margin_um
+        INNER_MARGIN = 5.0   # equal clearance above/below M1 inside the strip
+        m1_h = max(0.0, h - 2 * INNER_MARGIN)
+        y_center = y0 + 0.5 * h
+        y0_m1 = y_center - 0.5 * m1_h
+        m1_rect = gf.components.rectangle(size=(w, m1_h), layer=layers.M1)
+        D.add_ref(m1_rect).move((xL, y0_m1))
 
     # 7) Metadata for sidecar JSON
     meta: Dict[str, Any] = {
@@ -292,17 +256,7 @@ def build_serpentine_multilayer_cell(
         "serpentine": serp.model_dump(),
     }
 
-    meta["layers"]["M1"] = {
-        "gds_layer": layers.M1[0],
-        "datatype": layers.M1[1],
-        "placement": "bottom_strip_inside_plate",
-        "side_margin_um": 12.0,
-        "bottom_margin_um": 4.0,
-        "top_clear_um": 4.0,
-        "height_um": 35.0,
-        "full_width": True,
-    }
-
+    # Record strip layers
     meta["layers"]["OxideLowerStrip"] = {
         "gds_layer": layers.OX_LOWER_STRIP[0],
         "datatype": layers.OX_LOWER_STRIP[1],
@@ -313,6 +267,13 @@ def build_serpentine_multilayer_cell(
         "datatype": layers.OX_UPPER_STRIP[1],
         "region": "bottom_strip_window",
     }
-
+    meta["layers"]["M1"] = {
+        "gds_layer": layers.M1[0],
+        "datatype": layers.M1[1],
+        "region": "bottom_strip_window",
+        "inner_margin_um": 5.0,
+        "outer_margin_um": 0.0,
+        "full_width": True,
+    }
 
     return D, meta
