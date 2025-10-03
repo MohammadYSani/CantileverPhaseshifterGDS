@@ -185,6 +185,56 @@ def build_serpentine_multilayer_cell(
         layer_m1=layers.M1,
     )
 
+    def _bottom_strip_window(
+        *,
+        side_margin_um: float = 0.0,
+        symmetric_margin_um: float = 0.0,  # equal gap from plate bottom and a-Si bottom
+        fixed_height_um: Optional[float] = None,
+    ) -> Optional[tuple[float, float, float, float]]:
+        # plate bbox available in scope: px0, py0, px1, py1
+        xL = px0 + side_margin_um
+        xR = px1 - side_margin_um
+
+        if xR <= xL:
+            return None
+
+        if r_asi is not None:
+            ax0, ay0, ax1, ay1 = bbox_xyxy(r_asi)
+            # vertical window between plate bottom and a-Si bottom
+            y0 = py0 + symmetric_margin_um
+            y1 = ay0 - symmetric_margin_um
+            if fixed_height_um is not None:
+                mid = 0.5*(y0 + y1)
+                y0 = mid - 0.5*fixed_height_um
+                y1 = mid + 0.5*fixed_height_um
+        else:
+            # no a-Si: just use fixed height above plate bottom
+            y0 = py0 + symmetric_margin_um
+            y1 = y0 + (fixed_height_um or 40.0)
+
+        if y1 <= y0:
+            return None
+
+        return (xL, y0, xR - xL, y1 - y0)
+
+    # 6.6) Two oxide rectangles covering the bottom strip region
+    ws = _bottom_strip_window(
+        side_margin_um=0.0,          # you said: no side margin
+        symmetric_margin_um=0.0,    # example equal top/bottom margin; adjust as you like
+        fixed_height_um=None,        # None => fill the full gap between plate bottom and a-Si bottom
+    )
+    if ws is not None:
+        xL, y0, w, h = ws
+
+        # lower oxide (between M1 and stack)
+        ox_lower = gf.components.rectangle(size=(w, h), layer=layers.OX_LOWER_STRIP)
+        D.add_ref(ox_lower).move((xL, y0))
+
+        # upper oxide (cap over stack; limited to the same strip window)
+        ox_upper = gf.components.rectangle(size=(w, h), layer=layers.OX_UPPER_STRIP)
+        D.add_ref(ox_upper).move((xL, y0))
+
+
     # 7) Metadata for sidecar JSON
     meta: Dict[str, Any] = {
         "description": (
@@ -252,5 +302,17 @@ def build_serpentine_multilayer_cell(
         "height_um": 35.0,
         "full_width": True,
     }
+
+    meta["layers"]["OxideLowerStrip"] = {
+        "gds_layer": layers.OX_LOWER_STRIP[0],
+        "datatype": layers.OX_LOWER_STRIP[1],
+        "region": "bottom_strip_window",
+    }
+    meta["layers"]["OxideUpperStrip"] = {
+        "gds_layer": layers.OX_UPPER_STRIP[0],
+        "datatype": layers.OX_UPPER_STRIP[1],
+        "region": "bottom_strip_window",
+    }
+
 
     return D, meta

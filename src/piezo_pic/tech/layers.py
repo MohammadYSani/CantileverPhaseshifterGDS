@@ -15,6 +15,8 @@ L_OXIDE: GdsLayer     = (5, 0)    # Oxide cladding that follows the serpentine
 L_ASI: GdsLayer       = (6, 0)    # Amorphous-Si cantilever overhang (rectangle)
 L_RELEASE: GdsLayer   = (10, 0)   # Release holes
 L_M1: GdsLayer        = (20, 0)   # Metal pad
+L_OX_LOWER_STRIP: GdsLayer = (31, 0)   # oxide between M1 and the metal stack (bottom strip)
+L_OX_UPPER_STRIP: GdsLayer = (32, 0)   # oxide cap above the stack (bottom strip)
 
 
 @dataclass(frozen=True)
@@ -31,7 +33,8 @@ class LayerMap:
     ASI: GdsLayer = L_ASI
     RELEASE: GdsLayer = L_RELEASE
     M1: GdsLayer = L_M1
-
+    OX_LOWER_STRIP: GdsLayer = L_OX_LOWER_STRIP
+    OX_UPPER_STRIP: GdsLayer = L_OX_UPPER_STRIP
 
 # Default global instance
 DEFAULT_LAYERS = LayerMap()
