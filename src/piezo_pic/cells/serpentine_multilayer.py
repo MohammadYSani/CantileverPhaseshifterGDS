@@ -192,7 +192,7 @@ def build_serpentine_multilayer_cell(
 
         # --- M1 centered with symmetric inner margins inside this same window ---
         OUTER_MARGIN = 0.0   # already applied via symmetric_margin_um
-        INNER_MARGIN = 5.0   # equal clearance above/below M1 inside the strip
+        INNER_MARGIN = 20.0   # equal clearance above/below M1 inside the strip
         m1_h = max(0.0, h - 2 * INNER_MARGIN)
         y_center = y0 + 0.5 * h
         y0_m1 = y_center - 0.5 * m1_h
