@@ -1,45 +1,48 @@
 # src/piezo_pic/cells/serpentine_multilayer.py
 from __future__ import annotations
 
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Any
 from uuid import uuid4
 
-import numpy as np
 import gdsfactory as gf
+import numpy as np
 
+from ..features.release import add_release_rows_at_seams_final_frame
 from ..geometry.serpentine import serpentine_path_um
-from ..utils.geometry import bbox_xyxy, path_length_um, sample_points_um
 from ..tech.layers import LayerMap
 from ..tech.params import (
+    ASiParams,
+    BuildParams,
+    HoleParams,
+    PlateParams,
     SerpentineParams,
     WaveguideWidths,
-    PlateParams,
-    ASiParams,
-    HoleParams,
-    BuildParams,
 )
-from ..features.release import add_release_rows_at_seams_final_frame
+from ..utils.geometry import bbox_xyxy, path_length_um, sample_points_um
 from .stack import (
+    align_asi_to_plate_left,
     build_plate_and_asi_unrotated,
-    align_asi_to_plate_left_after_rotation,
 )
 
 
 def _extrude_layer(P, width_um: float, layer) -> gf.ComponentReference:
-    """Extrudes a path with a simple strip cross-section on the given layer."""
+    """Extrude a path with a simple strip cross-section on the given layer."""
     xs = gf.cross_section.strip(width=width_um, layer=layer)
     return gf.path.extrude(P, cross_section=xs)
 
 
-def _union_bbox_of_refs(refs: List[gf.ComponentReference]) -> Tuple[float, float, float, float]:
+def _union_bbox_of_refs(refs: list[gf.ComponentReference]) -> tuple[float, float, float, float]:
     """Union bbox of multiple references."""
-    xmins: List[float] = []
-    ymins: List[float] = []
-    xmaxs: List[float] = []
-    ymaxs: List[float] = []
+    xmins: list[float] = []
+    ymins: list[float] = []
+    xmaxs: list[float] = []
+    ymaxs: list[float] = []
     for r in refs:
         x0, y0, x1, y1 = bbox_xyxy(r)
-        xmins.append(x0); ymins.append(y0); xmaxs.append(x1); ymaxs.append(y1)
+        xmins.append(x0)
+        ymins.append(y0)
+        xmaxs.append(x1)
+        ymaxs.append(y1)
     return min(xmins), min(ymins), max(xmaxs), max(ymaxs)
 
 
@@ -52,9 +55,10 @@ def build_serpentine_multilayer_cell(
     asi: ASiParams,
     holes: HoleParams,
     build: BuildParams,
-) -> Tuple[gf.Component, Dict[str, Any]]:
+) -> tuple[gf.Component, dict[str, Any]]:
     """
     Compose the full multilayer device as a gdsfactory.Component (no file I/O).
+    Rotation is not used; the unrotated frame is the final frame.
     """
     # 1) Serpentine centerline (µm)
     P = serpentine_path_um(
@@ -69,20 +73,20 @@ def build_serpentine_multilayer_cell(
     # 2) Top-level component
     D = gf.Component(f"serpentine_multilayer_{uuid4().hex[:8]}")
 
-    # 3) Oxide + SiN (UNROTATED frame)
+    # 3) Oxide + SiN (FINAL frame)
     r_oxide = None
     if widths.add_oxide:
         r_oxide = D << _extrude_layer(P, width_um=widths.width_oxide_um, layer=layers.OXIDE)
     r_sin = D << _extrude_layer(P, width_um=widths.width_sin_um, layer=layers.SIN)
 
-    # NEW: shift core + cladding as a block by serp.y_offset_um
+    # Optional: shift core + cladding as a block by serp.y_offset_um
     if getattr(serp, "y_offset_um", 0.0) != 0.0:
         dy = float(serp.y_offset_um)
         if r_oxide is not None:
             r_oxide.movey(dy)
         r_sin.movey(dy)
 
-    # 4) Plate + a-Si (UNROTATED frame)
+    # 4) Plate + a-Si (FINAL frame)
     pts = np.asarray(P.points)
     r_plate_top, r_asi, r_plate_all = build_plate_and_asi_unrotated(
         D=D, path_points_um=pts, plate=plate, asi=asi, layers=layers
@@ -92,8 +96,8 @@ def build_serpentine_multilayer_cell(
     if not isinstance(r_plate_all, list) or len(r_plate_all) == 0:
         r_plate_all = [r_plate_top]
 
-    # 5) Align a-Si to plate (still unrotated)
-    align_asi_to_plate_left_after_rotation(r_plate_top, r_asi, asi)
+    # 5) Align a-Si to plate (FINAL frame)
+    align_asi_to_plate_left(r_plate_top, r_asi, asi)
 
     # --- Compute bboxes now (used both for holes and meta) ---
     bxmin, bymin, bxmax, bymax = _union_bbox_of_refs(r_plate_all)
@@ -102,34 +106,32 @@ def build_serpentine_multilayer_cell(
     rect_w = float(py1 - py0)
 
     # Optional a-Si bbox (to restrict holes to overhang region in Y and/or X)
-    asi_y_range: Optional[Tuple[float, float]] = None
-    asi_x_range: Optional[Tuple[float, float]] = None
+    asi_y_range: tuple[float, float] | None = None
+    asi_x_range: tuple[float, float] | None = None
     if r_asi is not None:
         ax0, ay0, ax1, ay1 = bbox_xyxy(r_asi)
-        # Intersect with plate inner margins when placing holes
         asi_y_range = (ay0, ay1)
         asi_x_range = (ax0, ax1)
 
-    # 6) Release holes (UNROTATED final frame)
+    # 6) Release holes (FINAL frame)
     if holes.add_holes:
         # Sample the centerline robustly
         s_vals = np.linspace(0.0, path_length_um(P), 4000)
-        pts_final = sample_points_um(P, s_vals)  # final == unrotated
+        pts_final = sample_points_um(P, s_vals)
 
-        # NEW: shift hole-avoidance path to match the moved SiN+oxide
+        # If SiN/oxide were shifted, shift the keep-out path the same amount
         dy = float(getattr(serp, "y_offset_um", 0.0) or 0.0)
         if dy != 0.0:
             pts_final[:, 1] += dy
 
-        # Build clipping windows:
-        x_range = asi_x_range  # if a-Si shorter in X, this limits holes in clamp region
-        y_range = asi_y_range  # limits holes to the a-Si overhang span in Y
+        # Build clipping windows (limit to a-Si region if present)
+        x_range = asi_x_range
+        y_range = asi_y_range
 
         add_release_rows_at_seams_final_frame(
             comp=D,
             P=P,
             plate_bbox_xyxy=(bxmin, bymin, bxmax, bymax),
-            rotate_deg=0.0,
             layers=layers,
             holes=holes,
             widths=widths,
@@ -148,8 +150,8 @@ def build_serpentine_multilayer_cell(
         *,
         side_margin_um: float = 0.0,
         symmetric_margin_um: float = 0.0,  # equal gap from plate bottom and a-Si bottom
-        fixed_height_um: Optional[float] = None,
-    ) -> Optional[tuple[float, float, float, float]]:
+        fixed_height_um: float | None = None,
+    ) -> tuple[float, float, float, float] | None:
         # plate bbox available in scope: px0, py0, px1, py1
         xL = px0 + side_margin_um
         xR = px1 - side_margin_um
@@ -191,7 +193,6 @@ def build_serpentine_multilayer_cell(
         D.add_ref(ox_upper).move((xL, y0))
 
         # --- M1 centered with symmetric inner margins inside this same window ---
-        OUTER_MARGIN = 0.0   # already applied via symmetric_margin_um
         INNER_MARGIN = 20.0   # equal clearance above/below M1 inside the strip
         m1_h = max(0.0, h - 2 * INNER_MARGIN)
         y_center = y0 + 0.5 * h
@@ -200,7 +201,7 @@ def build_serpentine_multilayer_cell(
         D.add_ref(m1_rect).move((xL, y0_m1))
 
     # 7) Metadata for sidecar JSON
-    meta: Dict[str, Any] = {
+    meta: dict[str, Any] = {
         "description": (
             "Serpentine SiN with oxide overclad, Al/AlN/Al trilayer plate, "
             "a-Si overhang, and (optional) release holes."
@@ -252,7 +253,6 @@ def build_serpentine_multilayer_cell(
                 "enabled": holes.add_holes,
             },
         },
-        "build": {"rotate_deg": 0.0},
         "serpentine": serp.model_dump(),
     }
 
@@ -271,7 +271,7 @@ def build_serpentine_multilayer_cell(
         "gds_layer": layers.M1[0],
         "datatype": layers.M1[1],
         "region": "bottom_strip_window",
-        "inner_margin_um": 5.0,
+        "inner_margin_um": 5.0,   # informational only
         "outer_margin_um": 0.0,
         "full_width": True,
     }

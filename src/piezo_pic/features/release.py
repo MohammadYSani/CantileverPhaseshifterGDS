@@ -1,73 +1,117 @@
+# src/piezo_pic/cells/features/release.py
 from __future__ import annotations
-from typing import Optional, Tuple
-import numpy as np
-import gdsfactory as gf
 
-from ..utils.geometry import (
-    min_dist_point_polyline,
-    path_length_um,
-    sample_points_um,
-)
+from typing import Iterable
+
+import gdsfactory as gf
+import numpy as np
+
 from ..tech.layers import LayerMap
 from ..tech.params import HoleParams, WaveguideWidths
+from ..utils.geometry import min_dist_point_polyline, path_length_um, sample_points_um
 
 
-def _dedupe_sorted(vals: np.ndarray, tol: float = 1e-3) -> np.ndarray:
+# --- module constants (avoid "magic numbers") ---
+_DEDUP_TOL_UM = 1e-3
+_NUM_EPS = 1e-9
+_DIV_EPS = 1e-12
+
+
+def _dedupe_sorted(vals: np.ndarray, tol: float = _DEDUP_TOL_UM) -> np.ndarray:
     """Return sorted unique values with a tolerance (microns)."""
     if vals.size == 0:
         return vals
     vals = np.sort(vals.astype(float))
-    keep = [vals[0]]
+    keep: list[float] = [float(vals[0])]
     for v in vals[1:]:
-        if abs(v - keep[-1]) > tol:
-            keep.append(v)
-    return np.array(keep, dtype=float)
+        if abs(float(v) - keep[-1]) > tol:
+            keep.append(float(v))
+    return np.asarray(keep, dtype=float)
 
 
 def add_release_rows_at_seams_final_frame(
     comp: gf.Component,
-    P,                                 # gf.Path (unrotated)
-    plate_bbox_xyxy: Tuple[float, float, float, float],  # plate bbox in current frame
-    rotate_deg: float,                 # kept for API compatibility; ignored
+    P: gf.Path,                              # centerline path in final frame
+    plate_bbox_xyxy: tuple[float, float, float, float],
     layers: LayerMap,
     holes: HoleParams,
     widths: WaveguideWidths,
     *,
     sample_N: int = 4000,
-    straight_tol: float = 0.06,        # tolerance on |dx/dy| for VERTICAL straights
-    bend_trim_um: float = 2.0,
+    straight_tol: float = 0.06,
+    bend_trim_um: float = 2.0,              # keep if you plan to use it later; otherwise you can drop it too
     mx_margin: float = 2.0,
     my_margin: float = 2.0,
-    pts_final: Optional[np.ndarray] = None,  # optional pre-sampled centerline (current frame)
-    x_range: Optional[Tuple[float, float]] = None,       # allowed X window for holes
-    y_range: Optional[Tuple[float, float]] = None,       # allowed Y window for holes
+    pts_final: np.ndarray | None = None,
+    x_range: tuple[float, float] | None = None,
+    y_range: tuple[float, float] | None = None,
 ) -> None:
+    ...
     """
-    Place release holes as vertical columns:
+    Place circular release holes as vertical columns:
       • one at the left inner plate margin,
       • one at the right inner plate margin,
       • and one at the midpoint (in X) between every pair of adjacent **vertical** straights
-        of the serpentine (so columns sit BETWEEN the vertical waveguide legs).
-    Holes are equispaced vertically. Optional x_range/y_range clip the placement window.
+        of the serpentine (i.e., columns sit BETWEEN the vertical waveguide legs).
+
+    Holes are equispaced vertically and clipped to optional x/y windows.
+    The function operates in the component's *final* frame; `rotate_deg` is ignored
+    but retained to avoid breaking old call sites.
+
+    Parameters
+    ----------
+    comp
+        Target component to receive hole references.
+    P
+        Serpentine centerline path (unrotated; already expressed in the same frame as `plate_bbox_xyxy`).
+    plate_bbox_xyxy
+        Plate bounding box (xmin, ymin, xmax, ymax) in current frame.
+    rotate_deg
+        Ignored. Present for backward compatibility.
+    layers
+        LayerMap providing `RELEASE`.
+    holes
+        Hole parameters (diameter, pitch or rows, optional clearance).
+    widths
+        Waveguide widths (used for keep-out from SiN core).
+    sample_N
+        Number of samples used to analyze the path for straight segments.
+    straight_tol
+        Threshold on |dx/dy| below which a segment is considered vertical.
+    bend_trim_um
+        Unused; reserved for future edge trimming near bends.
+    mx_margin, my_margin
+        Inner margins (µm) subtracted from the plate bbox before placing holes.
+    pts_final
+        Pre-sampled centerline (Nx2) in the current frame (skips sampling if provided).
+    x_range, y_range
+        Optional clipping windows (xmin, xmax) and (ymin, ymax).
+
+    Returns
+    -------
+    None
+        The function modifies `comp` in place by adding hole references.
     """
     # --- Sample the centerline in the current frame ---
     if pts_final is None:
-        s_vals = np.linspace(0.0, path_length_um(P), sample_N)
+        s_vals = np.linspace(0.0, float(path_length_um(P)), int(sample_N))
         pts_f = sample_points_um(P, s_vals)
     else:
         pts_f = np.asarray(pts_final, dtype=float)
-    if len(pts_f) < 2:
+    if pts_f.shape[0] < 2:
         return
 
     # --- Detect VERTICAL straights: |dx/dy| small AND |dy|>0 ---
-    d  = np.diff(pts_f, axis=0)
+    d = np.diff(pts_f, axis=0)
     dx = d[:, 0]
     dy = d[:, 1]
-    inv_slope = np.abs(dx / (np.abs(dy) + 1e-12))   # ~0 for vertical segments
-    mask = (inv_slope < straight_tol) & (np.abs(dy) > 1e-9)
+    inv_slope = np.abs(dx / (np.abs(dy) + _DIV_EPS))  # ~0 for vertical segments
+    mask = (inv_slope < float(straight_tol)) & (np.abs(dy) > _NUM_EPS)
 
     # Group consecutive True's into runs
-    runs, i, N = [], 0, mask.size
+    runs: list[tuple[int, int]] = []
+    i = 0
+    N = mask.size
     while i < N:
         if mask[i]:
             j = i
@@ -81,71 +125,68 @@ def add_release_rows_at_seams_final_frame(
         return
 
     # --- Convert runs to vertical straights (trim ends a little) ---
-    x_centers = []
+    x_centers: list[float] = []
     for i0, i1 in runs:
         seg = pts_f[i0:i1 + 1]
-        if len(seg) > 2:
-            seg = seg[1:-1]
-        if len(seg) == 0:
+        if seg.shape[0] > 2:
+            seg = seg[1:-1]  # soft trim
+        if seg.size == 0:
             continue
         x_centers.append(float(seg[:, 0].mean()))
     if len(x_centers) < 2:
         return
-    x_centers = np.array(sorted(x_centers), dtype=float)
+    x_centers_arr = np.array(sorted(x_centers), dtype=float)
 
     # --- Inner "safe" rectangle inside plate margins ---
-    xmin, ymin, xmax, ymax = plate_bbox_xyxy
-    x0_inner = xmin + mx_margin
-    x1_inner = xmax - mx_margin
-    y0_inner = ymin + my_margin
-    y1_inner = ymax - my_margin
+    xmin, ymin, xmax, ymax = [float(v) for v in plate_bbox_xyxy]
+    x0_inner = xmin + float(mx_margin)
+    x1_inner = xmax - float(mx_margin)
+    y0_inner = ymin + float(my_margin)
+    y1_inner = ymax - float(my_margin)
     if x1_inner <= x0_inner or y1_inner <= y0_inner:
         return
 
     # Apply external clipping windows if provided
     if x_range is not None:
-        xr0, xr1 = x_range
+        xr0, xr1 = (float(x_range[0]), float(x_range[1]))
         x0_inner = max(x0_inner, xr0)
         x1_inner = min(x1_inner, xr1)
     if y_range is not None:
-        yr0, yr1 = y_range
+        yr0, yr1 = (float(y_range[0]), float(y_range[1]))
         y0_inner = max(y0_inner, yr0)
         y1_inner = min(y1_inner, yr1)
     if x1_inner <= x0_inner or y1_inner <= y0_inner:
         return
 
     # --- Build column X positions (margins + midpoints BETWEEN vertical legs) ---
-    mids = 0.5 * (x_centers[:-1] + x_centers[1:])
+    mids = 0.5 * (x_centers_arr[:-1] + x_centers_arr[1:])
     seam_xs = np.concatenate([[x0_inner], mids, [x1_inner]])
     seam_xs = seam_xs[(seam_xs >= x0_inner) & (seam_xs <= x1_inner)]
-    seam_xs = _dedupe_sorted(seam_xs, tol=1e-3)
+    seam_xs = _dedupe_sorted(seam_xs, tol=_DEDUP_TOL_UM)
     if seam_xs.size == 0:
         return
 
     # --- Vertical Y positions: EXCLUDE edge rows ---
-    if isinstance(getattr(holes, "holes_per_col", None), int) and holes.holes_per_col is not None:
+    # Option A: explicit rows (holes_per_col)
+    if getattr(holes, "holes_per_col", None) is not None:
         Nrows = max(0, int(holes.holes_per_col))
         if Nrows == 0:
             ys = np.array([], dtype=float)
         elif Nrows == 1:
             ys = np.array([(y0_inner + y1_inner) * 0.5], dtype=float)
         else:
-            # exclude edges by padding by one and slicing out first/last
             ys = np.linspace(y0_inner, y1_inner, Nrows + 2, dtype=float)[1:-1]
     else:
+        # Option B: pitch (hole_pitch_y_um or hole_pitch_um)
         pitch_y = float((getattr(holes, "hole_pitch_y_um", None) or holes.hole_pitch_um) or 0.0)
         if pitch_y > 0.0:
-            # center the grid between the edges so no row is on the boundary
             y_start = y0_inner + 0.5 * pitch_y
-            y_stop  = y1_inner - 0.5 * pitch_y
+            y_stop = y1_inner - 0.5 * pitch_y
             if y_stop < y_start:
-                # not enough room for one full pitch: place one row in the middle
                 ys = np.array([(y0_inner + y1_inner) * 0.5], dtype=float)
             else:
-                # include end if within a tiny tolerance
-                ys = np.arange(y_start, y_stop + 1e-9, pitch_y, dtype=float)
+                ys = np.arange(y_start, y_stop + _NUM_EPS, pitch_y, dtype=float)
         else:
-            # fallback: one row in the middle (still avoids edges)
             ys = np.array([(y0_inner + y1_inner) * 0.5], dtype=float)
 
     if ys.size == 0:
@@ -153,15 +194,15 @@ def add_release_rows_at_seams_final_frame(
 
     # --- Keep-out from SiN core ---
     avoid_clearance = float(getattr(holes, "avoid_clearance_um", 0.20) or 0.0)
-    keepout_um = (widths.width_sin_um / 2.0) + (holes.hole_diam_um / 2.0) + avoid_clearance
+    keepout_um = (float(widths.width_sin_um) / 2.0) + (float(holes.hole_diam_um) / 2.0) + avoid_clearance
 
     # --- Hole primitive ---
-    hole = gf.components.circle(radius=holes.hole_diam_um / 2.0, layer=layers.RELEASE)
+    hole = gf.components.circle(radius=float(holes.hole_diam_um) / 2.0, layer=layers.RELEASE)
 
     # --- Place holes ---
     for x in seam_xs:
         for y in ys:
-            if keepout_um > 0:
+            if keepout_um > 0.0:
                 dmin = min_dist_point_polyline(float(x), float(y), pts_f)
                 if dmin < keepout_um:
                     continue

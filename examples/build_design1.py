@@ -1,9 +1,10 @@
 # examples/build_design1.py
 from __future__ import annotations
-from piezo_pic.tech.layers import DEFAULT_LAYERS
-from piezo_pic.tech.params import DeviceDefaults
+
 from piezo_pic.cells.serpentine_multilayer import build_serpentine_multilayer_cell
 from piezo_pic.io.write import write_gds_with_meta
+from piezo_pic.tech.layers import DEFAULT_LAYERS
+from piezo_pic.tech.params import DeviceDefaults
 
 
 def main() -> None:

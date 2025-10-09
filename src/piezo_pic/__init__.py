@@ -2,54 +2,41 @@
 """
 piezo_pic: PDK and utilities for piezo-optomechanical cantilever waveguides.
 
-This package bundles:
-- Tech definitions (layers, parameter sets)
-- Geometry generators (serpentine path, cross-section utilities)
-- Helpers for GDS export and geometric calculations
+Public API:
+- build_serpentine_multilayer_cell: construct the device component
+- write_gds_with_meta: write GDS plus a metadata sidecar
+- DEFAULT_LAYERS: canonical layer map
+- Parameter models (pydantic): SerpentineParams, WaveguideWidths, PlateParams,
+  ASiParams, HoleParams, BuildParams, DeviceDefaults
 """
 
-from .tech.layers import (
-    DEFAULT_LAYERS,
-    LayerMap,
-    L_SIN,
-    L_AL_BOTTOM,
-    L_ALN,
-    L_AL_TOP,
-    L_OXIDE,
-    L_ASI,
-    L_RELEASE,
-    L_M1,
-)
+from importlib import metadata as _metadata
+
+try:  # populated if installed; during editable/dev installs this may be absent
+    __version__ = _metadata.version("piezo-pic")
+except _metadata.PackageNotFoundError:  # pragma: no cover
+    __version__ = "0.0.0"
+
+# Public entry points
+from .cells.serpentine_multilayer import build_serpentine_multilayer_cell
+from .io.write import write_gds_with_meta
+
+# Public tech surface
+from .tech.layers import DEFAULT_LAYERS
 from .tech.params import (
-    SerpentineParams,
-    WaveguideWidths,
-    PlateParams,
     ASiParams,
-    HoleParams,
     BuildParams,
     DeviceDefaults,
-)
-from .geometry.serpentine import serpentine_path_um
-from .utils.geometry import (
-    path_length_um,
-    sample_points_um,
-    bbox_xyxy,
-    min_dist_point_polyline,
+    HoleParams,
+    PlateParams,
+    SerpentineParams,
+    WaveguideWidths,
 )
 
 __all__ = [
-    # tech
+    "build_serpentine_multilayer_cell",
+    "write_gds_with_meta",
     "DEFAULT_LAYERS",
-    "LayerMap",
-    "L_SIN",
-    "L_AL_BOTTOM",
-    "L_ALN",
-    "L_AL_TOP",
-    "L_OXIDE",
-    "L_ASI",
-    "L_RELEASE",
-    "L_M1",
-    # params
     "SerpentineParams",
     "WaveguideWidths",
     "PlateParams",
@@ -57,11 +44,5 @@ __all__ = [
     "HoleParams",
     "BuildParams",
     "DeviceDefaults",
-    # geometry
-    "serpentine_path_um",
-    # utils
-    "path_length_um",
-    "sample_points_um",
-    "bbox_xyxy",
-    "min_dist_point_polyline",
+    "__version__",
 ]

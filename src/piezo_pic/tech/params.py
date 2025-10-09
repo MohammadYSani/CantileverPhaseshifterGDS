@@ -1,8 +1,7 @@
 # src/piezo_pic/tech/params.py
 from __future__ import annotations
-from pydantic import BaseModel, Field
-from typing import Optional
 
+from pydantic import BaseModel, Field
 
 # ============================================================
 #   Serpentine waveguide geometry
@@ -45,7 +44,7 @@ class WaveguideWidths(BaseModel):
 
 class PlateParams(BaseModel):
     """Dimensions and placement of the Al/AlN/Al plate stack."""
-    mstack_rect_length_um: Optional[float] = None  # None -> auto span
+    mstack_rect_length_um: float | None = None  # None -> auto span
     mstack_rect_width_um: float = 6.0
     mstack_rect_dx_um: float = 0.0
     mstack_rect_dy_um: float = -25.0
@@ -63,7 +62,7 @@ class ASiParams(BaseModel):
     asi_overhang_left_um: float = 0.0
     asi_rect_dx_um: float = 0.0
     asi_rect_dy_um: float = 0.0
-    overhang_x_um: Optional[float] = None   # NEW: cantilever length along X
+    overhang_x_um: float | None = None   # NEW: cantilever length along X
 
 
 # ============================================================
@@ -78,8 +77,8 @@ class HoleParams(BaseModel):
     avoid_clearance_um: float = 0.20
 
     # vertical control
-    hole_pitch_y_um: Optional[float] = None
-    holes_per_col: Optional[int] = None
+    hole_pitch_y_um: float | None = None
+    holes_per_col: int | None = None
 
     # NEW: trim hole rows away from the overhang/clamp boundary
     edge_clearance_y_um: float = 0.0   # e.g. 5.0 removes the first/last row near the Y edges
