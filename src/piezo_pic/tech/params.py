@@ -62,7 +62,7 @@ class ASiParams(BaseModel):
     asi_overhang_left_um: float = 0.0
     asi_rect_dx_um: float = 0.0
     asi_rect_dy_um: float = 0.0
-    overhang_x_um: float | None = None   # NEW: cantilever length along X
+    overhang_x_um: float | None = None   # cantilever length along X (optional)
 
 
 # ============================================================
@@ -80,7 +80,7 @@ class HoleParams(BaseModel):
     hole_pitch_y_um: float | None = None
     holes_per_col: int | None = None
 
-    # NEW: trim hole rows away from the overhang/clamp boundary
+    # trim hole rows away from the overhang/clamp boundary
     edge_clearance_y_um: float = 0.0   # e.g. 5.0 removes the first/last row near the Y edges
 
 
@@ -103,7 +103,7 @@ class BuildParams(BaseModel):
     """Build-time options (mostly I/O)."""
     gds_path: str = "serpentine_multilayer.gds"
 
-    # NEW: controls equal clearance above/below M1 inside the bottom strip window.
+    # Controls equal clearance above/below M1 inside the bottom strip window.
     # Set to 0.0 to make M1 span the entire oxide strip (used in Design 2).
     m1_inner_margin_um: float = 20.0
 
@@ -119,5 +119,5 @@ class DeviceDefaults(BaseModel):
     plate: PlateParams = PlateParams()
     asi: ASiParams = ASiParams()
     holes: HoleParams = HoleParams()
-    backing: BackingParams = BackingParams()   # <-- NEW
+    backing: BackingParams = BackingParams()
     build: BuildParams = BuildParams()

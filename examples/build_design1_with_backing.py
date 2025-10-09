@@ -84,6 +84,10 @@ def main() -> None:
     d.holes.holes_per_col = 12
     d.holes.hole_pitch_y_um = None
 
+    # --- M1 (bottom metal) margin inside oxide strip ---
+    d.build.m1_inner_margin_um = 20.0  # you can change per design
+
+    # ---------------------------------------------------------------------
     # Build the multilayer device
     comp, meta = build_serpentine_multilayer_cell(
         layers=DEFAULT_LAYERS,
@@ -109,8 +113,9 @@ def main() -> None:
     else:
         top = comp
 
-    # Output single GDS + sidecar JSON
-    out_path = "design1_serpentine_multilayer_with_clamp.gds"
+    # ---------------------------------------------------------------------
+    # Output unified file naming convention
+    out_path = "design1_serpentine_multilayer.gds"
     write_gds_with_meta(top, meta, out_path)
     print(f"Wrote {out_path} and {out_path.replace('.gds', '.meta.json')}")
 

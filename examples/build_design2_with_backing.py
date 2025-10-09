@@ -60,9 +60,9 @@ def main() -> None:
     d = DeviceDefaults()  # independent parameter set for Design 2
 
     # --- Serpentine (Design 2) ---
-    d.serpentine.iterations    = 38
-    d.serpentine.radius_um     = 6.05
-    d.serpentine.length_um     = 60.0
+    d.serpentine.iterations     = 38
+    d.serpentine.radius_um      = 6.05
+    d.serpentine.length_um      = 60.0
     d.serpentine.band_height_um = 80.0
     d.serpentine.y_margin_um    = 0.0
     d.serpentine.y_offset_um    = -14.0
@@ -87,6 +87,10 @@ def main() -> None:
     d.holes.avoid_clearance_um = 0.50
     d.holes.holes_per_col      = 8
     d.holes.hole_pitch_y_um    = None
+
+    # --- M1 control (inside bottom strip window) ---
+    # 0.0 => M1 fills entire strip; increase to inset M1 equally from top/bottom.
+    d.build.m1_inner_margin_um = 6.0
 
     # --- Output file ---
     d.build.gds_path = "design2_serpentine_multilayer.gds"
