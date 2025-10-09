@@ -177,7 +177,7 @@ def build_serpentine_multilayer_cell(
 
         return (xL, y0, xR - xL, y1 - y0)
 
-    # 6.6) Two oxide rectangles covering the bottom strip region
+    # 6.6) Two oxide rectangles covering the bottom strip region + M1 inside it
     ws = _bottom_strip_window(
         side_margin_um=0.0,          # no side margin
         symmetric_margin_um=0.0,     # equal margin to plate bottom and a-Si bottom
@@ -192,15 +192,19 @@ def build_serpentine_multilayer_cell(
         ox_upper = gf.components.rectangle(size=(w, h), layer=layers.OX_UPPER_STRIP)
         D.add_ref(ox_upper).move((xL, y0))
 
-        # --- M1 centered with symmetric inner margins inside this same window ---
-        INNER_MARGIN = 20.0   # equal clearance above/below M1 inside the strip
-        m1_h = max(0.0, h - 2 * INNER_MARGIN)
+        # --- M1 centered with configurable inner margins inside this same window ---
+        INNER_MARGIN = float(getattr(build, "m1_inner_margin_um", 20.0))
+        m1_h = h - 2 * INNER_MARGIN
+        if m1_h <= 0:
+            # if margins would eliminate M1, fall back to full strip height
+            m1_h = max(1e-3, h)
         y_center = y0 + 0.5 * h
         y0_m1 = y_center - 0.5 * m1_h
         m1_rect = gf.components.rectangle(size=(w, m1_h), layer=layers.M1)
         D.add_ref(m1_rect).move((xL, y0_m1))
 
     # 7) Metadata for sidecar JSON
+    m1_inner_margin_val = float(getattr(build, "m1_inner_margin_um", 20.0))
     meta: dict[str, Any] = {
         "description": (
             "Serpentine SiN with oxide overclad, Al/AlN/Al trilayer plate, "
@@ -271,9 +275,9 @@ def build_serpentine_multilayer_cell(
         "gds_layer": layers.M1[0],
         "datatype": layers.M1[1],
         "region": "bottom_strip_window",
-        "inner_margin_um": 5.0,   # informational only
+        "inner_margin_um": m1_inner_margin_val,
         "outer_margin_um": 0.0,
-        "full_width": True,
+        "full_width": m1_inner_margin_val == 0.0,
     }
 
     return D, meta

@@ -103,6 +103,10 @@ class BuildParams(BaseModel):
     """Build-time options (mostly I/O)."""
     gds_path: str = "serpentine_multilayer.gds"
 
+    # NEW: controls equal clearance above/below M1 inside the bottom strip window.
+    # Set to 0.0 to make M1 span the entire oxide strip (used in Design 2).
+    m1_inner_margin_um: float = 20.0
+
 
 # ============================================================
 #   Aggregate default container
